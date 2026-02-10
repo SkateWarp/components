@@ -10,6 +10,7 @@ static const char *const TAG = "tcl_minisplit.switch";
 
 void TclMinisplitSwitch::setup() {
   this->parent_->register_listener([this](const AcState &state) {
+    if (!state.power) return;
     bool new_state = false;
     switch (this->purpose_) {
       case SWITCH_DISPLAY: new_state = state.display; break;
