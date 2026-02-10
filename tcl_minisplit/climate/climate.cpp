@@ -139,28 +139,31 @@ void TclMinisplitClimate::control(const climate::ClimateCall &call) {
 
 climate::ClimateTraits TclMinisplitClimate::traits() {
   auto traits = climate::ClimateTraits();
+
+  // Modes — use individual add calls (FiniteSetMask compatible)
   traits.add_supported_mode(climate::CLIMATE_MODE_OFF);
   traits.add_supported_mode(climate::CLIMATE_MODE_COOL);
   traits.add_supported_mode(climate::CLIMATE_MODE_FAN_ONLY);
   traits.add_supported_mode(climate::CLIMATE_MODE_DRY);
   traits.add_supported_mode(climate::CLIMATE_MODE_AUTO);
-  traits.set_supported_fan_modes({
-    climate::CLIMATE_FAN_AUTO,
-    climate::CLIMATE_FAN_QUIET,  // Missing in Ryan's implementation
-    climate::CLIMATE_FAN_LOW,
-    climate::CLIMATE_FAN_MEDIUM,
-    climate::CLIMATE_FAN_HIGH,
-  });
-  traits.set_supported_swing_modes({
-    climate::CLIMATE_SWING_OFF,
-    climate::CLIMATE_SWING_VERTICAL,
-  });
-  traits.set_supported_presets({
-    climate::CLIMATE_PRESET_NONE,
-    climate::CLIMATE_PRESET_BOOST,
-    climate::CLIMATE_PRESET_ECO,
-    climate::CLIMATE_PRESET_SLEEP,
-  });
+
+  // Fan modes
+  traits.add_supported_fan_mode(climate::CLIMATE_FAN_AUTO);
+  traits.add_supported_fan_mode(climate::CLIMATE_FAN_QUIET);
+  traits.add_supported_fan_mode(climate::CLIMATE_FAN_LOW);
+  traits.add_supported_fan_mode(climate::CLIMATE_FAN_MEDIUM);
+  traits.add_supported_fan_mode(climate::CLIMATE_FAN_HIGH);
+
+  // Swing modes
+  traits.add_supported_swing_mode(climate::CLIMATE_SWING_OFF);
+  traits.add_supported_swing_mode(climate::CLIMATE_SWING_VERTICAL);
+
+  // Presets
+  traits.add_supported_preset(climate::CLIMATE_PRESET_NONE);
+  traits.add_supported_preset(climate::CLIMATE_PRESET_BOOST);
+  traits.add_supported_preset(climate::CLIMATE_PRESET_ECO);
+  traits.add_supported_preset(climate::CLIMATE_PRESET_SLEEP);
+
   traits.set_visual_min_temperature(16.0);
   traits.set_visual_max_temperature(31.0);
   traits.set_visual_target_temperature_step(1.0);
