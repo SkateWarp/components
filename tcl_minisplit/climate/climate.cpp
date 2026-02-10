@@ -140,6 +140,9 @@ void TclMinisplitClimate::control(const climate::ClimateCall &call) {
 climate::ClimateTraits TclMinisplitClimate::traits() {
   auto traits = climate::ClimateTraits();
 
+  // Feature flags (replaces deprecated set_supports_* methods)
+  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE | climate::CLIMATE_SUPPORTS_ACTION);
+
   // Modes — use individual add calls (FiniteSetMask compatible)
   traits.add_supported_mode(climate::CLIMATE_MODE_OFF);
   traits.add_supported_mode(climate::CLIMATE_MODE_COOL);
