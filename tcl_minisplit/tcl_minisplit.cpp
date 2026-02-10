@@ -9,10 +9,38 @@ static const char *const TAG = "tcl_minisplit";
 // Static constexpr member definition (needed for C++14)
 constexpr uint8_t TclMinisplit::TX_BASE[TX_LENGTH];
 
+void TclMinisplit::setup() {
+  // Initialize NVS preference handles
+  // fnv1_hash generates a stable key from the string
+  this->pref_state_ = global_preferences->make_preference<SavedState>(fnv1_hash("tcl_ac_state"));
+  this->pref_enabled_ = global_preferences->make_preference<bool>(fnv1_hash("tcl_ac_persist"));
+
+  // Load persistence enabled flag
+  bool saved_enabled = false;
+  if (this->pref_enabled_.load(&saved_enabled)) {
+    this->persistence_enabled_ = saved_enabled;
+    ESP_LOGI(TAG, "Persistence loaded: %s", saved_enabled ? "ON" : "OFF");
+  }
+
+  // Pre-load saved state (will be applied on first RX)
+  if (this->persistence_enabled_) {
+    if (this->pref_state_.load(&this->last_saved_state_)) {
+      this->persistence_has_saved_ = true;
+      ESP_LOGI(TAG, "Saved state loaded: mode=0x%02X temp=%d power=%d",
+               this->last_saved_state_.mode, this->last_saved_state_.target_temp,
+               this->last_saved_state_.power);
+    } else {
+      ESP_LOGW(TAG, "No saved state found");
+      this->last_saved_state_ = {};
+    }
+  }
+}
+
 void TclMinisplit::loop() {
   this->read_serial_data_();
   this->send_pending_command_();
   this->send_heartbeat_if_needed_();
+  this->persistence_check_save_();
 }
 
 void TclMinisplit::register_listener(std::function<void(const AcState &state)> func) {
@@ -129,6 +157,19 @@ void TclMinisplit::parse_rx_packet_(const uint8_t *data, size_t len) {
   // Byte 46: outside motor
   this->state_.outside_motor = data[46];
 
+  // On first valid RX after boot, restore saved state if persistence is on
+  if (!this->first_rx_received_) {
+    this->first_rx_received_ = true;
+    this->persistence_restore_on_first_rx_();
+  } else if (this->persistence_enabled_) {
+    // Check if controllable state changed (e.g. physical remote used)
+    SavedState current;
+    current.from_ac_state(this->state_);
+    if (!current.equals(this->last_saved_state_)) {
+      this->persistence_mark_dirty_();
+    }
+  }
+
   this->notify_listeners_();
 }
 
@@ -148,6 +189,9 @@ void TclMinisplit::send_pending_command_() {
   this->pending_state_.reset();
   this->awaiting_response_ = true;
   this->last_heartbeat_ = millis();
+
+  // A user command was sent — mark persistence dirty
+  this->persistence_mark_dirty_();
 }
 
 void TclMinisplit::build_tx_packet_(const AcState &state, uint8_t *cmd, size_t len) {
@@ -255,6 +299,115 @@ void TclMinisplit::log_hex_(const char *prefix, const uint8_t *data, size_t len)
     p += sprintf(p, "%02X ", data[i]);
   }
   ESP_LOGD(TAG, "%s: %s", prefix, str);
+}
+
+// ─── Persistence ──────────────────────────────────────────────────
+//
+// Write strategy (flash wearout mitigation):
+//   1. Only write when persistence_enabled_ is true
+//   2. Only write if controllable state actually differs from last save
+//   3. Debounce: wait PERSIST_DEBOUNCE_MS (60s) after last change
+//      → rapid adjustments (user tweaking temp up/down) batch into 1 write
+//   4. ESP32 NVS already applies wear leveling across flash pages
+//
+// Worst case with 60s debounce: 1440 writes/day
+// ESP32 flash rated ~100k cycles/sector, NVS spreads across multiple pages
+// → years of continuous use before any concern
+
+void TclMinisplit::set_persistence_enabled(bool enabled) {
+  if (this->persistence_enabled_ == enabled)
+    return;
+
+  this->persistence_enabled_ = enabled;
+  this->pref_enabled_.save(&enabled);
+
+  if (enabled) {
+    // Save current state immediately when enabling
+    SavedState snap;
+    snap.from_ac_state(this->state_);
+    this->last_saved_state_ = snap;
+    this->pref_state_.save(&snap);
+    this->persistence_dirty_ = false;
+    this->persistence_has_saved_ = true;
+    ESP_LOGI(TAG, "Persistence enabled — current state saved");
+  } else {
+    this->persistence_dirty_ = false;
+    ESP_LOGI(TAG, "Persistence disabled");
+  }
+}
+
+void TclMinisplit::persistence_mark_dirty_() {
+  if (!this->persistence_enabled_)
+    return;
+
+  if (!this->persistence_dirty_) {
+    this->persistence_dirty_ = true;
+    this->persistence_dirty_since_ = millis();
+    ESP_LOGD(TAG, "Persistence: state marked dirty, will save in %lus",
+             PERSIST_DEBOUNCE_MS / 1000);
+  }
+}
+
+void TclMinisplit::persistence_check_save_() {
+  if (!this->persistence_enabled_ || !this->persistence_dirty_)
+    return;
+
+  unsigned long now = millis();
+  if (now - this->persistence_dirty_since_ < PERSIST_DEBOUNCE_MS)
+    return;
+
+  // Debounce elapsed — check if state actually differs from last save
+  SavedState current;
+  current.from_ac_state(this->state_);
+
+  if (current.equals(this->last_saved_state_)) {
+    // State matches what's already saved — skip write
+    this->persistence_dirty_ = false;
+    ESP_LOGD(TAG, "Persistence: state unchanged, write skipped");
+    return;
+  }
+
+  this->last_saved_state_ = current;
+  this->pref_state_.save(&current);
+  this->persistence_dirty_ = false;
+  this->persistence_has_saved_ = true;
+  ESP_LOGI(TAG, "Persistence: state saved (mode=0x%02X temp=%d power=%d fan=%d)",
+           current.mode, current.target_temp, current.power, current.fan);
+}
+
+void TclMinisplit::persistence_restore_on_first_rx_() {
+  if (!this->persistence_enabled_) {
+    ESP_LOGD(TAG, "Persistence disabled, not restoring");
+    return;
+  }
+
+  if (!this->persistence_has_saved_) {
+    ESP_LOGD(TAG, "No saved state to restore");
+    return;
+  }
+
+  // Compare saved state with what the AC is currently reporting
+  SavedState current;
+  current.from_ac_state(this->state_);
+
+  if (current.equals(this->last_saved_state_)) {
+    ESP_LOGI(TAG, "AC already in saved state, no restore needed");
+    this->persistence_restored_ = true;
+    return;
+  }
+
+  // AC state differs from saved — send restore command
+  ESP_LOGI(TAG, "Restoring saved state: mode=0x%02X temp=%d power=%d fan=%d",
+           this->last_saved_state_.mode, this->last_saved_state_.target_temp,
+           this->last_saved_state_.power, this->last_saved_state_.fan);
+
+  this->pending_state_ = std::make_unique<AcState>(this->state_);
+  this->last_saved_state_.to_ac_state(*this->pending_state_);
+
+  // Copy beep from current state (not persisted, shouldn't beep on restore)
+  this->pending_state_->beep = this->state_.beep;
+
+  this->persistence_restored_ = true;
 }
 
 }  // namespace tcl_minisplit

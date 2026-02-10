@@ -4,6 +4,10 @@
 namespace esphome {
 namespace tcl_minisplit {
 
+static const char *const TAG = "tcl_minisplit.switch";
+
+// ─── AC Control Switches ────────────────────────────────────────
+
 void TclMinisplitSwitch::setup() {
   this->parent_->register_listener([this](const AcState &state) {
     bool new_state = false;
@@ -30,6 +34,19 @@ void TclMinisplitSwitch::write_state(bool state) {
     case SWITCH_HEALTH:  pending->health = state;  break;
   }
 
+  this->publish_state(state);
+}
+
+// ─── Persistence Switch ─────────────────────────────────────────
+
+void TclPersistenceSwitch::setup() {
+  // Publish the current persistence state (loaded from NVS in hub setup())
+  this->publish_state(this->parent_->get_persistence_enabled());
+}
+
+void TclPersistenceSwitch::write_state(bool state) {
+  ESP_LOGI(TAG, "Persistence %s", state ? "enabled" : "disabled");
+  this->parent_->set_persistence_enabled(state);
   this->publish_state(state);
 }
 

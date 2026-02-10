@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/preferences.h"
 #include "esphome/components/uart/uart.h"
 #include <vector>
 #include <functional>
@@ -42,6 +43,46 @@ struct AcState {
   bool beep{true};
 };
 
+// Compact struct for NVS persistence — only controllable fields
+// NVS handles integrity (CRC per entry), no need for our own checksum
+// Packed: 3 bytes total
+struct __attribute__((packed)) SavedState {
+  uint8_t power   : 1;
+  uint8_t eco     : 1;
+  uint8_t turbo   : 1;
+  uint8_t display : 1;
+  uint8_t health  : 1;
+  uint8_t mute    : 1;
+  uint8_t sleep   : 1;
+  uint8_t swing_v : 1;
+  uint8_t mode    : 4;
+  uint8_t fan     : 3;
+  uint8_t _pad    : 1;
+  uint8_t target_temp;  // 16-31
+
+  void from_ac_state(const AcState &s) {
+    power = s.power; eco = s.eco; turbo = s.turbo;
+    display = s.display; health = s.health; mute = s.mute;
+    sleep = s.sleep; swing_v = s.swing_v;
+    mode = s.mode; fan = s.fan; target_temp = s.target_temp;
+    _pad = 0;
+  }
+
+  void to_ac_state(AcState &s) const {
+    s.power = power; s.eco = eco; s.turbo = turbo;
+    s.display = display; s.health = health; s.mute = mute;
+    s.sleep = sleep; s.swing_v = swing_v;
+    s.mode = mode; s.fan = fan; s.target_temp = target_temp;
+  }
+
+  bool equals(const SavedState &other) const {
+    return power == other.power && eco == other.eco && turbo == other.turbo &&
+           display == other.display && health == other.health && mute == other.mute &&
+           sleep == other.sleep && swing_v == other.swing_v &&
+           mode == other.mode && fan == other.fan && target_temp == other.target_temp;
+  }
+};
+
 struct AcStateListener {
   std::function<void(const AcState &state)> func;
 };
@@ -50,6 +91,7 @@ class TclMinisplit : public Component, public uart::UARTDevice {
  public:
   TclMinisplit() = default;
 
+  void setup() override;
   void loop() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
 
@@ -59,6 +101,10 @@ class TclMinisplit : public Component, public uart::UARTDevice {
   void prepare_pending_state();
   bool has_pending_state() const { return pending_state_ != nullptr; }
   AcState *get_pending_state() { return pending_state_.get(); }
+
+  // Persistence control
+  void set_persistence_enabled(bool enabled);
+  bool get_persistence_enabled() const { return persistence_enabled_; }
 
  protected:
   // Serial protocol
@@ -79,6 +125,28 @@ class TclMinisplit : public Component, public uart::UARTDevice {
 
   // Log helpers
   void log_hex_(const char *prefix, const uint8_t *data, size_t len);
+
+  // ─── Persistence ──────────────────────────────────────────────
+  // Strategy: debounced write — only saves to NVS when state has been
+  // stable for PERSIST_DEBOUNCE_MS and actually differs from last save.
+  // ESP32 NVS has built-in wear leveling across flash pages.
+  // With 60s debounce, worst case ~1440 writes/day, well within the
+  // ~100k cycle rating even without NVS wear leveling.
+  void persistence_check_save_();
+  void persistence_restore_on_first_rx_();
+  void persistence_mark_dirty_();
+
+  bool persistence_enabled_{false};
+  bool persistence_restored_{false};     // Have we restored after boot?
+  bool persistence_has_saved_{false};    // Did we load a valid state from NVS?
+  bool persistence_dirty_{false};        // State changed since last save?
+  unsigned long persistence_dirty_since_{0};  // When state first became dirty
+  SavedState last_saved_state_{};        // What we last wrote to NVS
+
+  ESPPreferenceObject pref_state_;       // NVS handle for saved state
+  ESPPreferenceObject pref_enabled_;     // NVS handle for enabled flag
+
+  static constexpr unsigned long PERSIST_DEBOUNCE_MS = 60000;  // 60 seconds
 
   // Current confirmed state from device
   AcState state_{};
@@ -105,6 +173,7 @@ class TclMinisplit : public Component, public uart::UARTDevice {
   // Timing
   unsigned long last_heartbeat_{0};
   bool awaiting_response_{false};
+  bool first_rx_received_{false};
 
   // TX constants
   static constexpr size_t TX_LENGTH = 35;

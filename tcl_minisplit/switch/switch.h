@@ -13,6 +13,7 @@ enum TclSwitchPurpose : uint8_t {
   SWITCH_HEALTH,
 };
 
+// Switches that control the AC unit (send TX commands)
 class TclMinisplitSwitch : public Component, public switch_::Switch {
  public:
   TclMinisplitSwitch(TclMinisplit *parent, TclSwitchPurpose purpose)
@@ -23,6 +24,17 @@ class TclMinisplitSwitch : public Component, public switch_::Switch {
   void write_state(bool state) override;
   TclMinisplit *parent_;
   TclSwitchPurpose purpose_;
+};
+
+// Persistence switch — controls the hub's save/restore behavior, not the AC
+class TclPersistenceSwitch : public Component, public switch_::Switch {
+ public:
+  TclPersistenceSwitch(TclMinisplit *parent) : parent_(parent) {}
+
+ protected:
+  void setup() override;
+  void write_state(bool state) override;
+  TclMinisplit *parent_;
 };
 
 }  // namespace tcl_minisplit

@@ -9,9 +9,13 @@ DEPENDENCIES = ["tcl_minisplit"]
 CONF_DISPLAY = "display_switch"
 CONF_BEEP = "beep"
 CONF_HEALTH = "health"
+CONF_PERSISTENCE = "persistence"
 
 TclMinisplitSwitch = tcl_minisplit_ns.class_(
     "TclMinisplitSwitch", switch.Switch, cg.Component
+)
+TclPersistenceSwitch = tcl_minisplit_ns.class_(
+    "TclPersistenceSwitch", switch.Switch, cg.Component
 )
 TclSwitchPurpose = tcl_minisplit_ns.enum("TclSwitchPurpose")
 
@@ -28,6 +32,10 @@ CONFIG_SCHEMA = cv.Schema(
         ).extend(cv.COMPONENT_SCHEMA),
         cv.Optional(CONF_HEALTH): switch.switch_schema(
             TclMinisplitSwitch, icon="mdi:medical-bag"
+        ).extend(cv.COMPONENT_SCHEMA),
+        cv.Optional(CONF_PERSISTENCE): switch.switch_schema(
+            TclPersistenceSwitch,
+            icon="mdi:content-save-cog",
         ).extend(cv.COMPONENT_SCHEMA),
     }
 )
@@ -46,4 +54,8 @@ async def to_code(config):
 
     if conf := config.get(CONF_HEALTH):
         var = await switch.new_switch(conf, parent, TclSwitchPurpose.SWITCH_HEALTH)
+        await cg.register_component(var, conf)
+
+    if conf := config.get(CONF_PERSISTENCE):
+        var = await switch.new_switch(conf, parent)
         await cg.register_component(var, conf)
