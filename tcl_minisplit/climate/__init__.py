@@ -11,9 +11,8 @@ TclMinisplitClimate = tcl_minisplit_ns.class_(
 )
 
 CONFIG_SCHEMA = cv.All(
-    climate.CLIMATE_SCHEMA.extend(
+    climate.climate_schema(TclMinisplitClimate).extend(
         {
-            cv.GenerateID(): cv.declare_id(TclMinisplitClimate),
             cv.GenerateID(CONF_TCL_MINISPLIT_ID): cv.use_id(TclMinisplit),
         }
     ).extend(cv.COMPONENT_SCHEMA)
