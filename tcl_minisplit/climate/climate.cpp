@@ -139,15 +139,11 @@ void TclMinisplitClimate::control(const climate::ClimateCall &call) {
 
 climate::ClimateTraits TclMinisplitClimate::traits() {
   auto traits = climate::ClimateTraits();
-  traits.set_supports_current_temperature(true);
-  traits.set_supports_action(true);
-  traits.set_supported_modes({
-    climate::CLIMATE_MODE_OFF,
-    climate::CLIMATE_MODE_COOL,
-    climate::CLIMATE_MODE_FAN_ONLY,
-    climate::CLIMATE_MODE_DRY,
-    climate::CLIMATE_MODE_AUTO,
-  });
+  traits.add_supported_mode(climate::CLIMATE_MODE_OFF);
+  traits.add_supported_mode(climate::CLIMATE_MODE_COOL);
+  traits.add_supported_mode(climate::CLIMATE_MODE_FAN_ONLY);
+  traits.add_supported_mode(climate::CLIMATE_MODE_DRY);
+  traits.add_supported_mode(climate::CLIMATE_MODE_AUTO);
   traits.set_supported_fan_modes({
     climate::CLIMATE_FAN_AUTO,
     climate::CLIMATE_FAN_QUIET,  // Missing in Ryan's implementation
