@@ -9,6 +9,8 @@ namespace tcl_minisplit {
 
 enum TclBinarySensorPurpose : uint8_t {
   BSENSOR_DEEP_SLEEP,
+  BSENSOR_CLEAN_FILTER,
+  BSENSOR_TIMER_ACTIVE,
 };
 
 class TclMinisplitBinarySensor : public Component, public binary_sensor::BinarySensor {

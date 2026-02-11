@@ -10,12 +10,13 @@ static const char *const TAG = "tcl_minisplit.switch";
 
 void TclMinisplitSwitch::setup() {
   this->parent_->register_listener([this](const AcState &state) {
-    if (!state.power) return;
+    if (!state.power) return;  // Don't update switches when AC is off
     bool new_state = false;
     switch (this->purpose_) {
-      case SWITCH_DISPLAY: new_state = state.display; break;
-      case SWITCH_BEEP:    new_state = state.beep;    break;
-      case SWITCH_HEALTH:  new_state = state.health;  break;
+      case SWITCH_DISPLAY:    new_state = state.display;    break;
+      case SWITCH_BEEP:       new_state = state.beep;       break;
+      case SWITCH_HEALTH:     new_state = state.health;     break;
+      case SWITCH_FAHRENHEIT: new_state = state.fahrenheit;  break;
     }
     if (this->state != new_state) {
       this->publish_state(new_state);
@@ -30,9 +31,10 @@ void TclMinisplitSwitch::write_state(bool state) {
     return;
 
   switch (this->purpose_) {
-    case SWITCH_DISPLAY: pending->display = state; break;
-    case SWITCH_BEEP:    pending->beep = state;    break;
-    case SWITCH_HEALTH:  pending->health = state;  break;
+    case SWITCH_DISPLAY:    pending->display = state;    break;
+    case SWITCH_BEEP:       pending->beep = state;       break;
+    case SWITCH_HEALTH:     pending->health = state;     break;
+    case SWITCH_FAHRENHEIT: pending->fahrenheit = state;  break;
   }
 
   this->publish_state(state);

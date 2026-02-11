@@ -26,8 +26,9 @@ void TclMinisplit::setup() {
   if (this->persistence_enabled_) {
     if (this->pref_state_.load(&this->last_saved_state_)) {
       this->persistence_has_saved_ = true;
-      ESP_LOGI(TAG, "Saved state loaded: mode=0x%02X temp=%d power=%d",
-               this->last_saved_state_.mode, this->last_saved_state_.target_temp,
+      ESP_LOGI(TAG, "Saved state loaded: mode=0x%02X temp=%.1f power=%d",
+               this->last_saved_state_.mode,
+               16.0f + this->last_saved_state_.target_temp / 2.0f,
                this->last_saved_state_.power);
     } else {
       ESP_LOGW(TAG, "No saved state found");
@@ -88,6 +89,7 @@ void TclMinisplit::read_serial_data_() {
 
 void TclMinisplit::process_serial_data_() {
   size_t len = this->rx_pos_;
+  bool dev_mode_active = (millis() < this->dev_pause_until_);
 
   // We expect 61-byte status responses with type 0x04
   if (len == 61 && this->rx_buffer_[3] == 0x04) {
@@ -95,8 +97,19 @@ void TclMinisplit::process_serial_data_() {
       this->log_hex_("RX", this->rx_buffer_, len);
       this->parse_rx_packet_(this->rx_buffer_, len);
       this->awaiting_response_ = false;
+      // In dev mode, also publish known packets so user sees all traffic
+      if (dev_mode_active && this->raw_rx_sensor_ != nullptr) {
+        this->raw_rx_sensor_->publish_state(this->format_hex_(this->rx_buffer_, len));
+      }
     } else {
       ESP_LOGW(TAG, "Invalid checksum on %d-byte packet", len);
+    }
+  } else if (len > 0) {
+    // Log any unexpected/unknown packet (useful for dev mode probing)
+    this->log_hex_("RX UNK", this->rx_buffer_, len);
+    ESP_LOGD(TAG, "Unknown packet: type=0x%02X len=%d", len > 3 ? this->rx_buffer_[3] : 0, len);
+    if (this->raw_rx_sensor_ != nullptr) {
+      this->raw_rx_sensor_->publish_state(this->format_hex_(this->rx_buffer_, len));
     }
   }
 
@@ -113,14 +126,19 @@ void TclMinisplit::parse_rx_packet_(const uint8_t *data, size_t len) {
 
   // Byte 8: [x, fan(3), temp(4)]
   this->state_.fan         = (data[8] >> 4) & 0x07;
-  this->state_.target_temp = (data[8] & 0x0F) + 16;
+  this->state_.target_temp = static_cast<float>((data[8] & 0x0F) + 16);
 
-  // Byte 9: health
-  this->state_.health = (data[9] >> 2) & 1;
+  // Byte 9: [0,timer_active,0,0, 0,health,0,0]
+  this->state_.timer_active = (data[9] >> 6) & 1;
+  this->state_.health       = (data[9] >> 2) & 1;
 
   // Byte 10: swing
   this->state_.swing_v = (data[10] >> 6) & 1;
   this->state_.swing_h = (data[10] >> 5) & 1;
+
+  // Bytes 11-12: timer values
+  this->state_.timer_hour = data[11] & 0x3F;  // 6 bits for hours
+  this->state_.timer_min  = data[12] & 0x3F;  // 6 bits for minutes
 
   // Bytes 17-18: current temperature (raw ADC → °C)
   float raw_temp = (((data[17] << 8) | data[18]) / 374.0f - 32.0f) / 1.8f;
@@ -156,6 +174,13 @@ void TclMinisplit::parse_rx_packet_(const uint8_t *data, size_t len) {
 
   // Byte 46: outside motor
   this->state_.outside_motor = data[46];
+
+  // Byte 50: [0,0,0,0, 0,0,clean_filter,0]
+  this->state_.clean_filter = (data[50] >> 1) & 1;
+
+  // Bytes 51-52: vane positions
+  this->state_.swing_v_pos = data[51];
+  this->state_.swing_h_pos = data[52];
 
   // On first valid RX after boot, restore saved state if persistence is on
   if (!this->first_rx_received_) {
@@ -197,29 +222,35 @@ void TclMinisplit::send_pending_command_() {
 void TclMinisplit::build_tx_packet_(const AcState &state, uint8_t *cmd, size_t len) {
   memcpy(cmd, TX_BASE, len);
 
-  // Byte 7: [eco, display, beep, x, x, power, 0, 0]
+  // Byte 7: [eco, display, beep, ontimer_en, offtimer_en, power, gen(2)]
   cmd[7] = 0;
-  cmd[7] |= (state.eco     ? 1 : 0) << 7;
-  cmd[7] |= (state.display ? 1 : 0) << 6;
-  cmd[7] |= (state.beep    ? 1 : 0) << 5;
-  cmd[7] |= (state.power   ? 1 : 0) << 2;
+  cmd[7] |= (state.eco              ? 1 : 0) << 7;
+  cmd[7] |= (state.display          ? 1 : 0) << 6;
+  cmd[7] |= (state.beep             ? 1 : 0) << 5;
+  cmd[7] |= (state.on_timer_enabled ? 1 : 0) << 4;
+  cmd[7] |= (state.off_timer_enabled? 1 : 0) << 3;
+  cmd[7] |= (state.power            ? 1 : 0) << 2;
+  cmd[7] |= (this->gen_ & 0x03);  // bits 0-1 = protocol generation (hub-level)
 
   // Byte 8: [mute, 0, turbo, health, mode(4)]
   // Mode mapping: RX→TX (protocol quirk)
   //   RX 0x01 (cool) → TX 0x03
-  //   RX 0x03 (dry)  → TX 0x02
   //   RX 0x02 (fan)  → TX 0x07
+  //   RX 0x03 (dry)  → TX 0x02
+  //   RX 0x04 (heat) → TX 0x01
   //   RX 0x05 (auto) → TX 0x08
-  static const uint8_t mode_map[] = {0, 0x03, 0x07, 0x02, 0, 0x08};
+  static const uint8_t mode_map[] = {0, 0x03, 0x07, 0x02, 0x01, 0x08};
   uint8_t tx_mode = (state.mode < sizeof(mode_map)) ? mode_map[state.mode] : 0x03;
   cmd[8] = tx_mode;
   cmd[8] |= (state.turbo  ? 1 : 0) << 6;
   cmd[8] |= (state.mute   ? 1 : 0) << 7;
   cmd[8] |= (state.health ? 1 : 0) << 4;
 
-  // Byte 9: temperature (31 - target = encoded)
-  uint8_t clamped_temp = std::max(uint8_t(16), std::min(uint8_t(31), state.target_temp));
-  cmd[9] = 31 - clamped_temp;
+  // Byte 9: temperature (31 - integer_part = encoded)
+  float clamped = std::max(16.0f, std::min(31.0f, state.target_temp));
+  uint8_t int_temp = static_cast<uint8_t>(clamped);
+  bool half_degree = (clamped - int_temp) >= 0.25f;  // 0.5 rounds to true
+  cmd[9] = 31 - int_temp;
 
   // Byte 10: [x, x, swing_v(3), fan(3)]
   // Fan mapping: RX→TX
@@ -231,10 +262,22 @@ void TclMinisplit::build_tx_packet_(const AcState &state, uint8_t *cmd, size_t l
     cmd[10] |= 0x07 << 3;  // bits 3,4,5 = vswing
   }
 
+  // Byte 11: [0, offtimer(6), 0]
+  cmd[11] = (state.off_timer_hours & 0x3F) << 1;
+
+  // Byte 12: [fahrenheit, ontimer(6), 0]
+  cmd[12] = (state.on_timer_hours & 0x3F) << 1;
+  if (state.fahrenheit) {
+    cmd[12] |= (1 << 7);  // bit 7 = fahrenheit
+  }
+
   // Byte 14: [x, x, halfdegree, x, swingh, x, x, x]
   cmd[14] = 0;
+  if (half_degree) {
+    cmd[14] |= (1 << 5);  // bit 5 = half degree
+  }
   if (state.swing_h) {
-    cmd[14] |= (1 << 3);  // Only bit 3 is hswing (fixed Ryan's bug)
+    cmd[14] |= (1 << 3);  // bit 3 = hswing (fixed Ryan's bug)
   }
 
   // Byte 19: sleep
@@ -243,6 +286,11 @@ void TclMinisplit::build_tx_packet_(const AcState &state, uint8_t *cmd, size_t l
 
 void TclMinisplit::send_heartbeat_if_needed_() {
   unsigned long now = millis();
+
+  // Dev mode: pause heartbeats to let custom responses come through
+  if (now < this->dev_pause_until_)
+    return;
+
   if (now - this->last_heartbeat_ >= 500) {
     static const uint8_t heartbeat[] = {0xBB, 0x00, 0x01, 0x04, 0x02, 0x01, 0x00, 0xBD};
     this->write_array(heartbeat, sizeof(heartbeat));
@@ -292,13 +340,72 @@ void TclMinisplit::notify_listeners_() {
 }
 
 void TclMinisplit::log_hex_(const char *prefix, const uint8_t *data, size_t len) {
-  char str[200] = {0};
-  char *p = str;
-  size_t max_bytes = std::min(len, size_t(60));  // Prevent overflow
-  for (size_t i = 0; i < max_bytes; i++) {
-    p += sprintf(p, "%02X ", data[i]);
+  std::string hex = this->format_hex_(data, len);
+  ESP_LOGD(TAG, "%s: %s", prefix, hex.c_str());
+}
+
+std::string TclMinisplit::format_hex_(const uint8_t *data, size_t len) {
+  std::string result;
+  result.reserve(len * 3);
+  char buf[4];
+  for (size_t i = 0; i < len; i++) {
+    if (i > 0) result += ' ';
+    snprintf(buf, sizeof(buf), "%02X", data[i]);
+    result += buf;
   }
-  ESP_LOGD(TAG, "%s: %s", prefix, str);
+  return result;
+}
+
+// ─── Dev Mode ─────────────────────────────────────────────────
+
+void TclMinisplit::send_raw_hex(const std::string &hex) {
+  // Parse hex string like "BB00010320..." into bytes and send over UART
+  // Ignores spaces and validates hex chars
+  std::vector<uint8_t> data;
+  data.reserve(hex.size() / 2);
+
+  for (size_t i = 0; i < hex.size(); i++) {
+    char c = hex[i];
+    if (c == ' ' || c == ':' || c == '-')
+      continue;
+
+    if (i + 1 >= hex.size())
+      break;
+
+    char hi = hex[i];
+    char lo = hex[i + 1];
+    i++;  // skip lo char
+
+    auto hex_val = [](char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      return -1;
+    };
+
+    int h = hex_val(hi);
+    int l = hex_val(lo);
+    if (h < 0 || l < 0) {
+      ESP_LOGW(TAG, "Invalid hex char in raw data at pos %d", i);
+      return;
+    }
+    data.push_back((h << 4) | l);
+  }
+
+  if (data.empty()) {
+    ESP_LOGW(TAG, "Empty raw data, nothing to send");
+    return;
+  }
+
+  this->log_hex_("RAW TX", data.data(), data.size());
+  this->write_array(data.data(), data.size());
+  if (this->raw_tx_sensor_ != nullptr) {
+    this->raw_tx_sensor_->publish_state(this->format_hex_(data.data(), data.size()));
+  }
+
+  // Pause heartbeats for 3 seconds to allow response from AC
+  this->dev_pause_until_ = millis() + 3000;
+  ESP_LOGI(TAG, "Dev mode: heartbeats paused for 3s");
 }
 
 // ─── Persistence ──────────────────────────────────────────────────
@@ -371,8 +478,8 @@ void TclMinisplit::persistence_check_save_() {
   this->pref_state_.save(&current);
   this->persistence_dirty_ = false;
   this->persistence_has_saved_ = true;
-  ESP_LOGI(TAG, "Persistence: state saved (mode=0x%02X temp=%d power=%d fan=%d)",
-           current.mode, current.target_temp, current.power, current.fan);
+  ESP_LOGI(TAG, "Persistence: state saved (mode=0x%02X temp=%.1f power=%d fan=%d)",
+           current.mode, 16.0f + current.target_temp / 2.0f, current.power, current.fan);
 }
 
 void TclMinisplit::persistence_restore_on_first_rx_() {
@@ -397,8 +504,9 @@ void TclMinisplit::persistence_restore_on_first_rx_() {
   }
 
   // AC state differs from saved — send restore command
-  ESP_LOGI(TAG, "Restoring saved state: mode=0x%02X temp=%d power=%d fan=%d",
-           this->last_saved_state_.mode, this->last_saved_state_.target_temp,
+  ESP_LOGI(TAG, "Restoring saved state: mode=0x%02X temp=%.1f power=%d fan=%d",
+           this->last_saved_state_.mode,
+           16.0f + this->last_saved_state_.target_temp / 2.0f,
            this->last_saved_state_.power, this->last_saved_state_.fan);
 
   this->pending_state_ = std::make_unique<AcState>(this->state_);

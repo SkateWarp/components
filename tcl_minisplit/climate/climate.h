@@ -11,6 +11,11 @@ class TclMinisplitClimate : public Component, public climate::Climate {
  public:
   TclMinisplitClimate(TclMinisplit *parent) : parent_(parent) {}
 
+  // Feature toggles — set from YAML via codegen
+  void set_supports_heat(bool v) { supports_heat_ = v; }
+  void set_supports_swing_h(bool v) { supports_swing_h_ = v; }
+  void set_supports_half_degree(bool v) { supports_half_degree_ = v; }
+
  protected:
   void setup() override;
   void control(const climate::ClimateCall &call) override;
@@ -26,6 +31,11 @@ class TclMinisplitClimate : public Component, public climate::Climate {
   climate::ClimatePreset ac_to_esphome_preset_(bool eco, bool turbo, bool sleep);
 
   TclMinisplit *parent_;
+
+  // Feature flags — defaults match basic TCL models (no heat, no swing_h, 1°C step)
+  bool supports_heat_{false};
+  bool supports_swing_h_{false};
+  bool supports_half_degree_{false};
 };
 
 }  // namespace tcl_minisplit

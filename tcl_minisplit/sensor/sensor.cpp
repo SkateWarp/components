@@ -21,6 +21,10 @@ float TclMinisplitSensor::get_value_from_state_(const AcState &state) {
     case SENSOR_OUTSIDE_MOTOR:      return static_cast<float>(state.outside_motor);
     case SENSOR_FAN_SPEED_RAW:      return static_cast<float>(state.fan_speed_raw);
     case SENSOR_FAULT_CODE:         return static_cast<float>(state.fault);
+    case SENSOR_SWING_V_POS:        return static_cast<float>(state.swing_v_pos);
+    case SENSOR_SWING_H_POS:        return static_cast<float>(state.swing_h_pos);
+    case SENSOR_TIMER_HOUR:         return static_cast<float>(state.timer_hour);
+    case SENSOR_TIMER_MIN:          return static_cast<float>(state.timer_min);
     default:                        return NAN;
   }
 }

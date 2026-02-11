@@ -18,9 +18,8 @@ void TclMinisplitClimate::setup() {
     }
 
     // Target temperature
-    float new_target = static_cast<float>(state.target_temp);
-    if (this->target_temperature != new_target) {
-      this->target_temperature = new_target;
+    if (this->target_temperature != state.target_temp) {
+      this->target_temperature = state.target_temp;
       changed = true;
     }
 
@@ -93,7 +92,7 @@ void TclMinisplitClimate::control(const climate::ClimateCall &call) {
 
   // Temperature
   if (call.get_target_temperature().has_value()) {
-    pending->target_temp = static_cast<uint8_t>(*call.get_target_temperature());
+    pending->target_temp = *call.get_target_temperature();
   }
 
   // Fan mode
@@ -143,12 +142,15 @@ climate::ClimateTraits TclMinisplitClimate::traits() {
   // Feature flags (replaces deprecated set_supports_* methods)
   traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE | climate::CLIMATE_SUPPORTS_ACTION);
 
-  // Modes — use individual add calls (FiniteSetMask compatible)
+  // Modes
   traits.add_supported_mode(climate::CLIMATE_MODE_OFF);
   traits.add_supported_mode(climate::CLIMATE_MODE_COOL);
   traits.add_supported_mode(climate::CLIMATE_MODE_FAN_ONLY);
   traits.add_supported_mode(climate::CLIMATE_MODE_DRY);
   traits.add_supported_mode(climate::CLIMATE_MODE_AUTO);
+  if (this->supports_heat_) {
+    traits.add_supported_mode(climate::CLIMATE_MODE_HEAT);
+  }
 
   // Fan modes
   traits.add_supported_fan_mode(climate::CLIMATE_FAN_AUTO);
@@ -160,6 +162,10 @@ climate::ClimateTraits TclMinisplitClimate::traits() {
   // Swing modes
   traits.add_supported_swing_mode(climate::CLIMATE_SWING_OFF);
   traits.add_supported_swing_mode(climate::CLIMATE_SWING_VERTICAL);
+  if (this->supports_swing_h_) {
+    traits.add_supported_swing_mode(climate::CLIMATE_SWING_HORIZONTAL);
+    traits.add_supported_swing_mode(climate::CLIMATE_SWING_BOTH);
+  }
 
   // Presets
   traits.add_supported_preset(climate::CLIMATE_PRESET_NONE);
@@ -169,19 +175,20 @@ climate::ClimateTraits TclMinisplitClimate::traits() {
 
   traits.set_visual_min_temperature(16.0);
   traits.set_visual_max_temperature(31.0);
-  traits.set_visual_target_temperature_step(1.0);
+  traits.set_visual_target_temperature_step(this->supports_half_degree_ ? 0.5f : 1.0f);
   return traits;
 }
 
 // ─── Conversion helpers ─────────────────────────────────────────
 
-// TCL RX modes: 0x01=cool, 0x02=fan, 0x03=dry, 0x05=auto
+// TCL RX modes: 0x01=cool, 0x02=fan, 0x03=dry, 0x04=heat, 0x05=auto
 climate::ClimateMode TclMinisplitClimate::ac_to_esphome_mode_(uint8_t mode, bool power) {
   if (!power) return climate::CLIMATE_MODE_OFF;
   switch (mode) {
     case 0x01: return climate::CLIMATE_MODE_COOL;
     case 0x02: return climate::CLIMATE_MODE_FAN_ONLY;
     case 0x03: return climate::CLIMATE_MODE_DRY;
+    case 0x04: return this->supports_heat_ ? climate::CLIMATE_MODE_HEAT : climate::CLIMATE_MODE_AUTO;
     case 0x05: return climate::CLIMATE_MODE_AUTO;
     default:
       ESP_LOGW(TAG, "Unknown AC mode: 0x%02X", mode);
@@ -196,6 +203,7 @@ void TclMinisplitClimate::esphome_to_ac_mode_(climate::ClimateMode mode, uint8_t
     case climate::CLIMATE_MODE_COOL:     ac_mode = 0x01; break;
     case climate::CLIMATE_MODE_FAN_ONLY: ac_mode = 0x02; break;
     case climate::CLIMATE_MODE_DRY:      ac_mode = 0x03; break;
+    case climate::CLIMATE_MODE_HEAT:     ac_mode = 0x04; break;
     case climate::CLIMATE_MODE_AUTO:     ac_mode = 0x05; break;
     default:                             ac_mode = 0x01; break;
   }

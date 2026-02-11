@@ -15,6 +15,10 @@ enum TclSensorPurpose : uint8_t {
   SENSOR_OUTSIDE_MOTOR,
   SENSOR_FAN_SPEED_RAW,
   SENSOR_FAULT_CODE,
+  SENSOR_SWING_V_POS,
+  SENSOR_SWING_H_POS,
+  SENSOR_TIMER_HOUR,
+  SENSOR_TIMER_MIN,
 };
 
 class TclMinisplitSensor : public Component, public sensor::Sensor {

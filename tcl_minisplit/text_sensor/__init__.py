@@ -7,6 +7,8 @@ DEPENDENCIES = ["tcl_minisplit"]
 
 CONF_FAN_SPEED = "fan_speed"
 CONF_FAULT = "fault"
+CONF_RAW_TX = "raw_tx"
+CONF_RAW_RX = "raw_rx"
 
 TclMinisplitTextSensor = tcl_minisplit_ns.class_(
     "TclMinisplitTextSensor", text_sensor.TextSensor, cg.Component
@@ -22,6 +24,12 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_FAULT): text_sensor.text_sensor_schema(
             TclMinisplitTextSensor, icon="mdi:alert-circle-outline"
         ).extend(cv.COMPONENT_SCHEMA),
+        cv.Optional(CONF_RAW_TX): text_sensor.text_sensor_schema(
+            icon="mdi:upload-network-outline"
+        ),
+        cv.Optional(CONF_RAW_RX): text_sensor.text_sensor_schema(
+            icon="mdi:download-network-outline"
+        ),
     }
 )
 
@@ -40,3 +48,11 @@ async def to_code(config):
             conf, parent, TclTextSensorPurpose.TSENSOR_FAULT
         )
         await cg.register_component(var, conf)
+
+    if conf := config.get(CONF_RAW_TX):
+        var = await text_sensor.new_text_sensor(conf)
+        cg.add(parent.set_raw_tx_sensor(var))
+
+    if conf := config.get(CONF_RAW_RX):
+        var = await text_sensor.new_text_sensor(conf)
+        cg.add(parent.set_raw_rx_sensor(var))

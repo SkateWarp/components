@@ -11,6 +11,7 @@ enum TclSwitchPurpose : uint8_t {
   SWITCH_DISPLAY,
   SWITCH_BEEP,
   SWITCH_HEALTH,
+  SWITCH_FAHRENHEIT,
 };
 
 // Switches that control the AC unit (send TX commands)

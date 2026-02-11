@@ -3,9 +3,11 @@
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
 #include "esphome/components/uart/uart.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include <vector>
 #include <functional>
 #include <memory>
+#include <string>
 #include <cmath>
 
 namespace esphome {
@@ -25,9 +27,9 @@ struct AcState {
   bool deep_sleep{false};
   bool swing_h{false};
   bool swing_v{false};
-  uint8_t mode{0};       // 0x01=cool, 0x02=fan, 0x03=dry, 0x05=auto
+  uint8_t mode{0};       // 0x01=cool, 0x02=fan, 0x03=dry, 0x04=heat, 0x05=auto
   uint8_t fan{0};         // 0=auto, 1=low, 2=med, 3=high
-  uint8_t target_temp{24};
+  float target_temp{24.0f};
   float current_temp{NAN};
   uint8_t fan_speed_raw{0};
   uint8_t pipe_out{0};
@@ -39,8 +41,23 @@ struct AcState {
   uint8_t outside_motor{0};
   uint8_t sleep_ext{0};   // Full byte 19 for deep sleep detection
 
+  // Timer (RX bytes 9, 11, 12)
+  bool timer_active{false};
+  uint8_t timer_hour{0};
+  uint8_t timer_min{0};
+
+  // Additional RX fields
+  bool clean_filter{false};   // Byte 50 bit 1 — filter needs cleaning
+  uint8_t swing_v_pos{0};     // Byte 51 — vertical vane position
+  uint8_t swing_h_pos{0};     // Byte 52 — horizontal vane position
+
   // TX-only state (not reported by device)
   bool beep{true};
+  bool fahrenheit{false};
+  bool on_timer_enabled{false};
+  bool off_timer_enabled{false};
+  uint8_t on_timer_hours{0};   // 0-24
+  uint8_t off_timer_hours{0};  // 0-24
 };
 
 // Compact struct for NVS persistence — only controllable fields
@@ -58,13 +75,14 @@ struct __attribute__((packed)) SavedState {
   uint8_t mode    : 4;
   uint8_t fan     : 3;
   uint8_t _pad    : 1;
-  uint8_t target_temp;  // 16-31
+  uint8_t target_temp;  // Encoded as (temp - 16.0) * 2, range 0-30 for 16.0-31.0
 
   void from_ac_state(const AcState &s) {
     power = s.power; eco = s.eco; turbo = s.turbo;
     display = s.display; health = s.health; mute = s.mute;
     sleep = s.sleep; swing_v = s.swing_v;
-    mode = s.mode; fan = s.fan; target_temp = s.target_temp;
+    mode = s.mode; fan = s.fan;
+    target_temp = static_cast<uint8_t>((s.target_temp - 16.0f) * 2.0f);
     _pad = 0;
   }
 
@@ -72,7 +90,8 @@ struct __attribute__((packed)) SavedState {
     s.power = power; s.eco = eco; s.turbo = turbo;
     s.display = display; s.health = health; s.mute = mute;
     s.sleep = sleep; s.swing_v = swing_v;
-    s.mode = mode; s.fan = fan; s.target_temp = target_temp;
+    s.mode = mode; s.fan = fan;
+    s.target_temp = 16.0f + target_temp / 2.0f;
   }
 
   bool equals(const SavedState &other) const {
@@ -106,6 +125,17 @@ class TclMinisplit : public Component, public uart::UARTDevice {
   void set_persistence_enabled(bool enabled);
   bool get_persistence_enabled() const { return persistence_enabled_; }
 
+  // Dev mode — send raw hex bytes over UART
+  void send_raw_hex(const std::string &hex);
+
+  // Dev mode — optional text_sensors for HA visibility
+  void set_raw_rx_sensor(text_sensor::TextSensor *sensor) { raw_rx_sensor_ = sensor; }
+  void set_raw_tx_sensor(text_sensor::TextSensor *sensor) { raw_tx_sensor_ = sensor; }
+
+  // Protocol generation flag (0-3), persists across commands
+  void set_gen(uint8_t gen) { gen_ = gen & 0x03; }
+  uint8_t get_gen() const { return gen_; }
+
  protected:
   // Serial protocol
   void read_serial_data_();
@@ -125,6 +155,14 @@ class TclMinisplit : public Component, public uart::UARTDevice {
 
   // Log helpers
   void log_hex_(const char *prefix, const uint8_t *data, size_t len);
+  std::string format_hex_(const uint8_t *data, size_t len);
+
+  // Dev mode text sensors
+  text_sensor::TextSensor *raw_rx_sensor_{nullptr};
+  text_sensor::TextSensor *raw_tx_sensor_{nullptr};
+
+  // Protocol generation (persists across commands, not part of RX state)
+  uint8_t gen_{0};
 
   // ─── Persistence ──────────────────────────────────────────────
   // Strategy: debounced write — only saves to NVS when state has been
@@ -174,6 +212,7 @@ class TclMinisplit : public Component, public uart::UARTDevice {
   unsigned long last_heartbeat_{0};
   bool awaiting_response_{false};
   bool first_rx_received_{false};
+  unsigned long dev_pause_until_{0};  // Pause heartbeats after raw TX
 
   // TX constants
   static constexpr size_t TX_LENGTH = 35;

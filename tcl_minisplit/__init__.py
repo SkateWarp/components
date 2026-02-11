@@ -5,7 +5,7 @@ from esphome.const import CONF_ID
 
 DEPENDENCIES = ["uart"]
 CODEOWNERS = ["@anyelo"]
-AUTO_LOAD = ["climate", "sensor", "binary_sensor", "switch", "text_sensor"]
+AUTO_LOAD = ["climate", "sensor", "binary_sensor", "switch", "text_sensor", "number"]
 
 CONF_TCL_MINISPLIT_ID = "tcl_minisplit_id"
 

@@ -12,6 +12,10 @@ CONF_PIPE_OUT = "pipe_out_temperature"
 CONF_OUTSIDE_MOTOR = "outside_motor"
 CONF_FAN_SPEED_RAW = "fan_speed_raw"
 CONF_FAULT_CODE = "fault_code"
+CONF_SWING_V_POS = "swing_v_position"
+CONF_SWING_H_POS = "swing_h_position"
+CONF_TIMER_HOUR = "timer_hour"
+CONF_TIMER_MIN = "timer_min"
 
 TclMinisplitSensor = tcl_minisplit_ns.class_(
     "TclMinisplitSensor", sensor.Sensor, cg.Component
@@ -81,6 +85,38 @@ SENSOR_TYPES = {
         "schema": sensor.sensor_schema(
             TclMinisplitSensor,
             icon="mdi:alert-circle",
+        ),
+    },
+    CONF_SWING_V_POS: {
+        "purpose": "SENSOR_SWING_V_POS",
+        "schema": sensor.sensor_schema(
+            TclMinisplitSensor,
+            icon="mdi:arrow-up-down",
+            state_class="measurement",
+        ),
+    },
+    CONF_SWING_H_POS: {
+        "purpose": "SENSOR_SWING_H_POS",
+        "schema": sensor.sensor_schema(
+            TclMinisplitSensor,
+            icon="mdi:arrow-left-right",
+            state_class="measurement",
+        ),
+    },
+    CONF_TIMER_HOUR: {
+        "purpose": "SENSOR_TIMER_HOUR",
+        "schema": sensor.sensor_schema(
+            TclMinisplitSensor,
+            icon="mdi:timer-outline",
+            unit_of_measurement="h",
+        ),
+    },
+    CONF_TIMER_MIN: {
+        "purpose": "SENSOR_TIMER_MIN",
+        "schema": sensor.sensor_schema(
+            TclMinisplitSensor,
+            icon="mdi:timer-outline",
+            unit_of_measurement="min",
         ),
     },
 }
