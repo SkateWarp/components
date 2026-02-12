@@ -125,7 +125,18 @@ void TclMinisplit::parse_rx_packet_(const uint8_t *data, size_t len) {
   this->state_.mode    = data[7] & 0x0F;
 
   // Byte 8: [x, fan(3), temp(4)]
-  this->state_.fan         = (data[8] >> 4) & 0x07;
+  uint8_t raw_fan = (data[8] >> 4) & 0x07;
+  if (this->five_fan_speeds_) {
+    // 5-speed RX: raw masked values are non-sequential
+    // adaasch: 0x8=auto,0x9=s1,0xC=s2,0xA=s3,0xD=s4,0xB=s5
+    // After &0x07:  0=auto, 1=s1, 4=s2, 2=s3, 5=s4, 3=s5
+    // Normalize to 3 bands: s1→low(1), s2-s3→med(2), s4-s5→high(3)
+    static const uint8_t rx_5fan[] = {0, 1, 2, 3, 1, 2};  // index=raw&7, value=normalized
+    this->state_.fan = (raw_fan < sizeof(rx_5fan)) ? rx_5fan[raw_fan] : 0;
+  } else {
+    // 3-speed: raw values 0-3 already sequential (auto/low/med/high)
+    this->state_.fan = raw_fan;
+  }
   this->state_.target_temp = static_cast<float>((data[8] & 0x0F) + 16);
 
   // Byte 9: [0,timer_active,0,0, 0,health,0,0]
@@ -251,8 +262,9 @@ void TclMinisplit::build_tx_packet_(const AcState &state, uint8_t *cmd, size_t l
   cmd[9] = 31 - int_temp;
 
   // Byte 10: [8deg_heater(7), ?(6), vswing(5:3), fan(2:0)]
-  // Fan mapping: RX→TX (3-speed: auto/low/med/high)
-  //   0 (auto) → 0, 1 (low) → 2, 2 (med) → 3, 3 (high) → 5
+  // Fan mapping: normalized (0=auto,1=low,2=med,3=high) → TX wire value
+  // 3-speed: auto=0, low=0x02(s1), med=0x03(s2), high=0x05(s3)
+  // 5-speed: auto=0, low=0x02(s1), med=0x03(s3), high=0x05(s5) — same wire values, AC skips s2/s4
   static const uint8_t fan_map[] = {0, 2, 3, 5};
   uint8_t tx_fan = (state.fan < sizeof(fan_map)) ? fan_map[state.fan] : 0;
   cmd[10] = tx_fan;

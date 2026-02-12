@@ -155,6 +155,10 @@ class TclMinisplit : public Component, public uart::UARTDevice {
   void set_gen(uint8_t gen) { gen_ = gen & 0x03; }
   uint8_t get_gen() const { return gen_; }
 
+  // Fan speed mode — affects RX normalization and TX encoding
+  void set_five_fan_speeds(bool v) { five_fan_speeds_ = v; }
+  bool get_five_fan_speeds() const { return five_fan_speeds_; }
+
  protected:
   // Serial protocol
   void read_serial_data_();
@@ -182,6 +186,7 @@ class TclMinisplit : public Component, public uart::UARTDevice {
 
   // Protocol generation (persists across commands, not part of RX state)
   uint8_t gen_{0};
+  bool five_fan_speeds_{false};
 
   // ─── Persistence ──────────────────────────────────────────────
   // Strategy: debounced write — only saves to NVS when state has been

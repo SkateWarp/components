@@ -152,7 +152,9 @@ climate::ClimateTraits TclMinisplitClimate::traits() {
     traits.add_supported_mode(climate::CLIMATE_MODE_HEAT);
   }
 
-  // Fan modes
+  // Fan modes — always standard ESPHome modes
+  // 3-speed AC: LOW=speed1, MEDIUM=speed2, HIGH=speed3
+  // 5-speed AC: LOW=speed1, MEDIUM=speed3, HIGH=speed5 (same UI, different wire mapping)
   traits.add_supported_fan_mode(climate::CLIMATE_FAN_AUTO);
   traits.add_supported_fan_mode(climate::CLIMATE_FAN_QUIET);
   traits.add_supported_fan_mode(climate::CLIMATE_FAN_LOW);

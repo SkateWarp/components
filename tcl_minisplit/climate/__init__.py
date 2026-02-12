@@ -9,6 +9,7 @@ DEPENDENCIES = ["tcl_minisplit"]
 CONF_SUPPORTS_HEAT = "supports_heat"
 CONF_SUPPORTS_SWING_H = "supports_swing_h"
 CONF_SUPPORTS_HALF_DEGREE = "supports_half_degree"
+CONF_SUPPORTS_FIVE_FAN = "supports_five_fan_speeds"
 
 TclMinisplitClimate = tcl_minisplit_ns.class_(
     "TclMinisplitClimate", cg.Component, climate.Climate
@@ -21,6 +22,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_SUPPORTS_HEAT, default=False): cv.boolean,
             cv.Optional(CONF_SUPPORTS_SWING_H, default=False): cv.boolean,
             cv.Optional(CONF_SUPPORTS_HALF_DEGREE, default=False): cv.boolean,
+            cv.Optional(CONF_SUPPORTS_FIVE_FAN, default=False): cv.boolean,
         }
     ).extend(cv.COMPONENT_SCHEMA)
 )
@@ -35,3 +37,5 @@ async def to_code(config):
     cg.add(var.set_supports_heat(config[CONF_SUPPORTS_HEAT]))
     cg.add(var.set_supports_swing_h(config[CONF_SUPPORTS_SWING_H]))
     cg.add(var.set_supports_half_degree(config[CONF_SUPPORTS_HALF_DEGREE]))
+    # Five fan speeds is set on the hub (affects protocol TX/RX)
+    cg.add(parent.set_five_fan_speeds(config[CONF_SUPPORTS_FIVE_FAN]))
