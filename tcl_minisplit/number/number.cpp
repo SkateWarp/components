@@ -13,12 +13,13 @@ void TclMinisplitNumber::setup() {
     return;
   }
 
-  // Timer values come from RX state
+  // Sleep mode and vane positions come from state
   this->parent_->register_listener([this](const AcState &state) {
     float new_val = 0;
     switch (this->purpose_) {
-      case NUMBER_ON_TIMER:  new_val = state.on_timer_hours; break;
-      case NUMBER_OFF_TIMER: new_val = state.off_timer_hours; break;
+      case NUMBER_SLEEP_MODE: new_val = static_cast<float>(state.sleep_mode); break;
+      case NUMBER_VSWING_POS: new_val = static_cast<float>(state.vswing_pos_tx); break;
+      case NUMBER_HSWING_POS: new_val = static_cast<float>(state.hswing_pos_tx); break;
       default: break;
     }
     if (this->state != new_val) {
@@ -28,12 +29,12 @@ void TclMinisplitNumber::setup() {
 }
 
 void TclMinisplitNumber::control(float value) {
-  uint8_t hours = static_cast<uint8_t>(value);
+  uint8_t val = static_cast<uint8_t>(value);
 
   // Gen is hub-level, not per-command
   if (this->purpose_ == NUMBER_GEN) {
-    this->parent_->set_gen(static_cast<uint8_t>(value));
-    ESP_LOGD(TAG, "Gen set to %d", static_cast<int>(value));
+    this->parent_->set_gen(val);
+    ESP_LOGD(TAG, "Gen set to %d", val);
     this->publish_state(value);
     return;
   }
@@ -44,15 +45,17 @@ void TclMinisplitNumber::control(float value) {
     return;
 
   switch (this->purpose_) {
-    case NUMBER_ON_TIMER:
-      pending->on_timer_hours = hours;
-      pending->on_timer_enabled = (hours > 0);
-      ESP_LOGD(TAG, "On timer: %dh (%s)", hours, hours > 0 ? "enabled" : "disabled");
+    case NUMBER_SLEEP_MODE:
+      pending->sleep_mode = val & 0x03;
+      ESP_LOGD(TAG, "Sleep mode: %d", val);
       break;
-    case NUMBER_OFF_TIMER:
-      pending->off_timer_hours = hours;
-      pending->off_timer_enabled = (hours > 0);
-      ESP_LOGD(TAG, "Off timer: %dh (%s)", hours, hours > 0 ? "enabled" : "disabled");
+    case NUMBER_VSWING_POS:
+      pending->vswing_pos_tx = val;
+      ESP_LOGD(TAG, "VSwing pos TX: 0x%02X", val);
+      break;
+    case NUMBER_HSWING_POS:
+      pending->hswing_pos_tx = val;
+      ESP_LOGD(TAG, "HSwing pos TX: 0x%02X", val);
       break;
     default:
       break;

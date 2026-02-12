@@ -8,9 +8,10 @@ namespace esphome {
 namespace tcl_minisplit {
 
 enum TclNumberPurpose : uint8_t {
-  NUMBER_ON_TIMER,
-  NUMBER_OFF_TIMER,
   NUMBER_GEN,
+  NUMBER_SLEEP_MODE,
+  NUMBER_VSWING_POS,
+  NUMBER_HSWING_POS,
 };
 
 class TclMinisplitNumber : public Component, public number::Number {

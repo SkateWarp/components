@@ -189,7 +189,7 @@ void TclMinisplit::parse_rx_packet_(const uint8_t *data, size_t len) {
   } else if (this->persistence_enabled_) {
     // Check if controllable state changed (e.g. physical remote used)
     SavedState current;
-    current.from_ac_state(this->state_);
+    current.from_ac_state(this->state_, this->gen_);
     if (!current.equals(this->last_saved_state_)) {
       this->persistence_mark_dirty_();
     }
@@ -222,23 +222,21 @@ void TclMinisplit::send_pending_command_() {
 void TclMinisplit::build_tx_packet_(const AcState &state, uint8_t *cmd, size_t len) {
   memcpy(cmd, TX_BASE, len);
 
-  // Byte 7: [eco, display, beep, ontimer_en, offtimer_en, power, gen(2)]
+  // Byte 7: [eco(7), display(6), beep(5), ?(4), ?(3), power(2), gen(1:0)]
+  // adaasch: power=0x4 in bits[4:7] → that's bit 2 in LSB-first
+  // Timer enable bits removed — adaasch confirms they don't exist in TX
   cmd[7] = 0;
-  cmd[7] |= (state.eco              ? 1 : 0) << 7;
-  cmd[7] |= (state.display          ? 1 : 0) << 6;
-  cmd[7] |= (state.beep             ? 1 : 0) << 5;
-  cmd[7] |= (state.on_timer_enabled ? 1 : 0) << 4;
-  cmd[7] |= (state.off_timer_enabled? 1 : 0) << 3;
-  cmd[7] |= (state.power            ? 1 : 0) << 2;
+  cmd[7] |= (state.eco     ? 1 : 0) << 7;
+  cmd[7] |= (state.display ? 1 : 0) << 6;
+  cmd[7] |= (state.beep    ? 1 : 0) << 5;
+  cmd[7] |= (state.power   ? 1 : 0) << 2;
   cmd[7] |= (this->gen_ & 0x03);  // bits 0-1 = protocol generation (hub-level)
 
-  // Byte 8: [mute, 0, turbo, health, mode(4)]
-  // Mode mapping: RX→TX (protocol quirk)
-  //   RX 0x01 (cool) → TX 0x03
-  //   RX 0x02 (fan)  → TX 0x07
+  // Byte 8: [mute(7), ?(6), turbo(6), health(4), mode(3:0)]
+  // Mode mapping: RX→TX (protocol quirk, confirmed by all sources)
+  //   RX 0x01 (cool) → TX 0x03    RX 0x04 (heat) → TX 0x01
+  //   RX 0x02 (fan)  → TX 0x07    RX 0x05 (auto) → TX 0x08
   //   RX 0x03 (dry)  → TX 0x02
-  //   RX 0x04 (heat) → TX 0x01
-  //   RX 0x05 (auto) → TX 0x08
   static const uint8_t mode_map[] = {0, 0x03, 0x07, 0x02, 0x01, 0x08};
   uint8_t tx_mode = (state.mode < sizeof(mode_map)) ? mode_map[state.mode] : 0x03;
   cmd[8] = tx_mode;
@@ -246,42 +244,59 @@ void TclMinisplit::build_tx_packet_(const AcState &state, uint8_t *cmd, size_t l
   cmd[8] |= (state.mute   ? 1 : 0) << 7;
   cmd[8] |= (state.health ? 1 : 0) << 4;
 
-  // Byte 9: temperature (31 - integer_part = encoded)
+  // Byte 9: [?(7:4), temp(3:0)]  temp = 31 - integer_part
   float clamped = std::max(16.0f, std::min(31.0f, state.target_temp));
   uint8_t int_temp = static_cast<uint8_t>(clamped);
-  bool half_degree = (clamped - int_temp) >= 0.25f;  // 0.5 rounds to true
+  bool half_degree = (clamped - int_temp) >= 0.25f;
   cmd[9] = 31 - int_temp;
 
-  // Byte 10: [x, x, swing_v(3), fan(3)]
-  // Fan mapping: RX→TX
+  // Byte 10: [8deg_heater(7), ?(6), vswing(5:3), fan(2:0)]
+  // Fan mapping: RX→TX (3-speed: auto/low/med/high)
   //   0 (auto) → 0, 1 (low) → 2, 2 (med) → 3, 3 (high) → 5
   static const uint8_t fan_map[] = {0, 2, 3, 5};
   uint8_t tx_fan = (state.fan < sizeof(fan_map)) ? fan_map[state.fan] : 0;
   cmd[10] = tx_fan;
   if (state.swing_v) {
-    cmd[10] |= 0x07 << 3;  // bits 3,4,5 = vswing
+    cmd[10] |= 0x07 << 3;  // bits 3,4,5 = vswing move
   }
 
-  // Byte 11: [0, offtimer(6), 0]
-  cmd[11] = (state.off_timer_hours & 0x3F) << 1;
+  // Byte 11: [?(7:4), hswing(3), ?(2), halfdegree(1), ?(0)]
+  // Per adaasch — verified with logic analyzer
+  cmd[11] = 0;
+  if (state.swing_h) {
+    cmd[11] |= (1 << 3);  // bit 3 = hswing move
+  }
+  if (half_degree) {
+    cmd[11] |= (1 << 1);  // bit 1 = 0.5°C
+  }
 
-  // Byte 12: [fahrenheit, ontimer(6), 0]
-  cmd[12] = (state.on_timer_hours & 0x3F) << 1;
+  // Byte 12: [fahrenheit(7), ?(6:0)]
+  cmd[12] = 0;
   if (state.fahrenheit) {
-    cmd[12] |= (1 << 7);  // bit 7 = fahrenheit
+    cmd[12] |= (1 << 7);
   }
 
-  // Byte 14: [x, x, halfdegree, x, swingh, x, x, x]
+  // Byte 14: [?(7:6), halfdegree(5), ?(4), swingh(3), ?(2:0)]
+  // Per junkfix — write BOTH bytes 11 and 14 for firmware compatibility
   cmd[14] = 0;
   if (half_degree) {
-    cmd[14] |= (1 << 5);  // bit 5 = half degree
+    cmd[14] |= (1 << 5);  // bit 5 = half degree (junkfix layout)
   }
   if (state.swing_h) {
-    cmd[14] |= (1 << 3);  // bit 3 = hswing (fixed Ryan's bug)
+    cmd[14] |= (1 << 3);  // bit 3 = hswing (junkfix layout)
   }
 
-  // Byte 19: sleep
-  cmd[19] = state.sleep ? 1 : 0;
+  // Byte 19: [?(7:2), sleep_mode(1:0)]
+  // adaasch: 0=off, 1=default, 2=elderly, 3=young
+  cmd[19] = state.sleep_mode & 0x03;
+
+  // Byte 32: vertical vane position (adaasch mapping)
+  // 0x00=N/A, 0x01-0x05=fix positions, 0x08/0x10/0x18=move ranges
+  cmd[32] = state.vswing_pos_tx;
+
+  // Byte 33: horizontal vane position (adaasch mapping)
+  // 0x80=N/A, 0x81-0x85=fix positions, 0x88/0x90/0x98/0xA0=move ranges
+  cmd[33] = state.hswing_pos_tx;
 }
 
 void TclMinisplit::send_heartbeat_if_needed_() {
@@ -431,7 +446,7 @@ void TclMinisplit::set_persistence_enabled(bool enabled) {
   if (enabled) {
     // Save current state immediately when enabling
     SavedState snap;
-    snap.from_ac_state(this->state_);
+    snap.from_ac_state(this->state_, this->gen_);
     this->last_saved_state_ = snap;
     this->pref_state_.save(&snap);
     this->persistence_dirty_ = false;
@@ -465,7 +480,7 @@ void TclMinisplit::persistence_check_save_() {
 
   // Debounce elapsed — check if state actually differs from last save
   SavedState current;
-  current.from_ac_state(this->state_);
+  current.from_ac_state(this->state_, this->gen_);
 
   if (current.equals(this->last_saved_state_)) {
     // State matches what's already saved — skip write
@@ -478,8 +493,9 @@ void TclMinisplit::persistence_check_save_() {
   this->pref_state_.save(&current);
   this->persistence_dirty_ = false;
   this->persistence_has_saved_ = true;
-  ESP_LOGI(TAG, "Persistence: state saved (mode=0x%02X temp=%.1f power=%d fan=%d)",
-           current.mode, 16.0f + current.target_temp / 2.0f, current.power, current.fan);
+  ESP_LOGI(TAG, "Persistence: state saved (mode=0x%02X temp=%.1f power=%d fan=%d beep=%d fahr=%d gen=%d)",
+           current.mode, 16.0f + current.target_temp / 2.0f, current.power, current.fan,
+           current.beep, current.fahrenheit, current.gen);
 }
 
 void TclMinisplit::persistence_restore_on_first_rx_() {
@@ -495,7 +511,7 @@ void TclMinisplit::persistence_restore_on_first_rx_() {
 
   // Compare saved state with what the AC is currently reporting
   SavedState current;
-  current.from_ac_state(this->state_);
+  current.from_ac_state(this->state_, this->gen_);
 
   if (current.equals(this->last_saved_state_)) {
     ESP_LOGI(TAG, "AC already in saved state, no restore needed");
@@ -510,10 +526,7 @@ void TclMinisplit::persistence_restore_on_first_rx_() {
            this->last_saved_state_.power, this->last_saved_state_.fan);
 
   this->pending_state_ = std::make_unique<AcState>(this->state_);
-  this->last_saved_state_.to_ac_state(*this->pending_state_);
-
-  // Copy beep from current state (not persisted, shouldn't beep on restore)
-  this->pending_state_->beep = this->state_.beep;
+  this->last_saved_state_.to_ac_state(*this->pending_state_, this->gen_);
 
   this->persistence_restored_ = true;
 }

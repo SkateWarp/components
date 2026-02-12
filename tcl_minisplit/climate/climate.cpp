@@ -81,7 +81,7 @@ void TclMinisplitClimate::control(const climate::ClimateCall &call) {
     climate::ClimateMode mode = *call.get_mode();
     if (mode == climate::CLIMATE_MODE_OFF) {
       pending->power = false;
-      pending->sleep = false;
+      pending->sleep_mode = 0;
       pending->turbo = false;
       pending->eco = false;
     } else {
@@ -113,7 +113,7 @@ void TclMinisplitClimate::control(const climate::ClimateCall &call) {
     auto preset = *call.get_preset();
     pending->eco = false;
     pending->turbo = false;
-    pending->sleep = false;
+    pending->sleep_mode = 0;
     pending->mute = false;
 
     switch (preset) {
@@ -126,7 +126,7 @@ void TclMinisplitClimate::control(const climate::ClimateCall &call) {
         pending->fan = 3;
         break;
       case climate::CLIMATE_PRESET_SLEEP:
-        pending->sleep = true;
+        pending->sleep_mode = 1;  // default sleep mode
         break;
       case climate::CLIMATE_PRESET_NONE:
       default:

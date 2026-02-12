@@ -54,51 +54,70 @@ struct AcState {
   // TX-only state (not reported by device)
   bool beep{true};
   bool fahrenheit{false};
-  bool on_timer_enabled{false};
-  bool off_timer_enabled{false};
-  uint8_t on_timer_hours{0};   // 0-24
-  uint8_t off_timer_hours{0};  // 0-24
+  uint8_t sleep_mode{0};       // 0=off, 1=default, 2=elderly, 3=young (TX byte 19 bits 1:0)
+  uint8_t vswing_pos_tx{0};    // TX byte 32: vane V position (adaasch mapping)
+  uint8_t hswing_pos_tx{0x80}; // TX byte 33: vane H position (0x80=N/A default)
 };
 
-// Compact struct for NVS persistence — only controllable fields
+// Compact struct for NVS persistence — ALL controllable fields
 // NVS handles integrity (CRC per entry), no need for our own checksum
-// Packed: 3 bytes total
+// Packed: 6 bytes total
 struct __attribute__((packed)) SavedState {
-  uint8_t power   : 1;
-  uint8_t eco     : 1;
-  uint8_t turbo   : 1;
-  uint8_t display : 1;
-  uint8_t health  : 1;
-  uint8_t mute    : 1;
-  uint8_t sleep   : 1;
-  uint8_t swing_v : 1;
-  uint8_t mode    : 4;
-  uint8_t fan     : 3;
-  uint8_t _pad    : 1;
-  uint8_t target_temp;  // Encoded as (temp - 16.0) * 2, range 0-30 for 16.0-31.0
+  // Byte 0
+  uint8_t power      : 1;
+  uint8_t eco        : 1;
+  uint8_t turbo      : 1;
+  uint8_t display    : 1;
+  uint8_t health     : 1;
+  uint8_t mute       : 1;
+  uint8_t sleep_mode : 2;  // 0=off, 1=default, 2=elderly, 3=young
+  // Byte 1
+  uint8_t swing_v    : 1;
+  uint8_t swing_h    : 1;
+  uint8_t beep       : 1;
+  uint8_t fahrenheit : 1;
+  uint8_t mode       : 4;
+  // Byte 2
+  uint8_t fan        : 3;
+  uint8_t gen        : 2;
+  uint8_t _pad       : 3;
+  // Byte 3
+  uint8_t target_temp;      // Encoded as (temp - 16.0) * 2, range 0-30 for 16.0-31.0
+  // Bytes 4-5
+  uint8_t vswing_pos_tx;    // Vane V position (TX byte 32)
+  uint8_t hswing_pos_tx;    // Vane H position (TX byte 33)
 
-  void from_ac_state(const AcState &s) {
+  void from_ac_state(const AcState &s, uint8_t hub_gen) {
     power = s.power; eco = s.eco; turbo = s.turbo;
     display = s.display; health = s.health; mute = s.mute;
-    sleep = s.sleep; swing_v = s.swing_v;
-    mode = s.mode; fan = s.fan;
+    sleep_mode = s.sleep_mode; swing_v = s.swing_v; swing_h = s.swing_h;
+    beep = s.beep; fahrenheit = s.fahrenheit;
+    mode = s.mode; fan = s.fan; gen = hub_gen & 0x03;
     target_temp = static_cast<uint8_t>((s.target_temp - 16.0f) * 2.0f);
+    vswing_pos_tx = s.vswing_pos_tx;
+    hswing_pos_tx = s.hswing_pos_tx;
     _pad = 0;
   }
 
-  void to_ac_state(AcState &s) const {
+  void to_ac_state(AcState &s, uint8_t &hub_gen) const {
     s.power = power; s.eco = eco; s.turbo = turbo;
     s.display = display; s.health = health; s.mute = mute;
-    s.sleep = sleep; s.swing_v = swing_v;
-    s.mode = mode; s.fan = fan;
+    s.sleep_mode = sleep_mode; s.swing_v = swing_v; s.swing_h = swing_h;
+    s.beep = beep; s.fahrenheit = fahrenheit;
+    s.mode = mode; s.fan = fan; hub_gen = gen;
     s.target_temp = 16.0f + target_temp / 2.0f;
+    s.vswing_pos_tx = vswing_pos_tx;
+    s.hswing_pos_tx = hswing_pos_tx;
   }
 
   bool equals(const SavedState &other) const {
     return power == other.power && eco == other.eco && turbo == other.turbo &&
            display == other.display && health == other.health && mute == other.mute &&
-           sleep == other.sleep && swing_v == other.swing_v &&
-           mode == other.mode && fan == other.fan && target_temp == other.target_temp;
+           sleep_mode == other.sleep_mode && swing_v == other.swing_v &&
+           swing_h == other.swing_h && beep == other.beep &&
+           fahrenheit == other.fahrenheit && gen == other.gen &&
+           mode == other.mode && fan == other.fan && target_temp == other.target_temp &&
+           vswing_pos_tx == other.vswing_pos_tx && hswing_pos_tx == other.hswing_pos_tx;
   }
 };
 
