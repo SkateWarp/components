@@ -23,7 +23,7 @@ class TclMinisplitNumber : public Component, public number::Number {
   void setup() override;
   void control(float value) override;
   TclMinisplit *parent_{nullptr};
-  TclNumberPurpose purpose_{NUMBER_ON_TIMER};
+  TclNumberPurpose purpose_{NUMBER_GEN};
 };
 
 }  // namespace tcl_minisplit
