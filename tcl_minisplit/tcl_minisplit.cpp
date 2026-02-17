@@ -39,8 +39,25 @@ void TclMinisplit::setup() {
 
 void TclMinisplit::loop() {
   this->read_serial_data_();
-  this->send_pending_command_();
-  this->send_heartbeat_if_needed_();
+
+  unsigned long now = millis();
+
+  // Dev mode: pause all TX to let custom responses come through
+  if (now < this->dev_pause_until_)
+    goto skip_tx;
+
+  if (this->pending_state_) {
+    // User command ready → send immediately, reset heartbeat timer
+    this->send_pending_command_();
+    this->last_heartbeat_ = now;
+  } else if (now - this->last_heartbeat_ >= 500) {
+    // No pending command → periodic heartbeat/poll
+    static const uint8_t heartbeat[] = {0xBB, 0x00, 0x01, 0x04, 0x02, 0x01, 0x00, 0xBD};
+    this->write_array(heartbeat, sizeof(heartbeat));
+    this->last_heartbeat_ = now;
+  }
+
+skip_tx:
   this->persistence_check_save_();
 }
 
@@ -96,7 +113,6 @@ void TclMinisplit::process_serial_data_() {
     if (this->validate_checksum_(this->rx_buffer_, len)) {
       this->log_hex_("RX", this->rx_buffer_, len);
       this->parse_rx_packet_(this->rx_buffer_, len);
-      this->awaiting_response_ = false;
       // In dev mode, also publish known packets so user sees all traffic
       if (dev_mode_active && this->raw_rx_sensor_ != nullptr) {
         this->raw_rx_sensor_->publish_state(this->format_hex_(this->rx_buffer_, len));
@@ -200,7 +216,15 @@ void TclMinisplit::parse_rx_packet_(const uint8_t *data, size_t len) {
   } else if (this->persistence_enabled_) {
     // Check if controllable state changed (e.g. physical remote used)
     SavedState current;
-    current.from_ac_state(this->state_, this->gen_);
+    if (this->state_.power) {
+      // AC is ON — full state snapshot
+      current.from_ac_state(this->state_, this->gen_);
+    } else {
+      // AC is OFF — only update power bit, keep last active settings
+      // (RX may report zeroed/meaningless values when off)
+      current = this->last_saved_state_;
+      current.power = 0;
+    }
     if (!current.equals(this->last_saved_state_)) {
       this->persistence_mark_dirty_();
     }
@@ -212,7 +236,7 @@ void TclMinisplit::parse_rx_packet_(const uint8_t *data, size_t len) {
 // ─── Serial TX ──────────────────────────────────────────────────
 
 void TclMinisplit::send_pending_command_() {
-  if (!this->pending_state_ || this->awaiting_response_)
+  if (!this->pending_state_)
     return;
 
   uint8_t cmd[TX_LENGTH];
@@ -222,9 +246,11 @@ void TclMinisplit::send_pending_command_() {
   this->log_hex_("TX", cmd, TX_LENGTH);
   this->write_array(cmd, TX_LENGTH);
 
+  if (this->raw_tx_sensor_ != nullptr) {
+    this->raw_tx_sensor_->publish_state(this->format_hex_(cmd, TX_LENGTH));
+  }
+
   this->pending_state_.reset();
-  this->awaiting_response_ = true;
-  this->last_heartbeat_ = millis();
 
   // A user command was sent — mark persistence dirty
   this->persistence_mark_dirty_();
@@ -309,21 +335,6 @@ void TclMinisplit::build_tx_packet_(const AcState &state, uint8_t *cmd, size_t l
   // Byte 33: horizontal vane position (adaasch mapping)
   // 0x80=N/A, 0x81-0x85=fix positions, 0x88/0x90/0x98/0xA0=move ranges
   cmd[33] = state.hswing_pos_tx;
-}
-
-void TclMinisplit::send_heartbeat_if_needed_() {
-  unsigned long now = millis();
-
-  // Dev mode: pause heartbeats to let custom responses come through
-  if (now < this->dev_pause_until_)
-    return;
-
-  if (now - this->last_heartbeat_ >= 500) {
-    static const uint8_t heartbeat[] = {0xBB, 0x00, 0x01, 0x04, 0x02, 0x01, 0x00, 0xBD};
-    this->write_array(heartbeat, sizeof(heartbeat));
-    this->last_heartbeat_ = now;
-    this->awaiting_response_ = false;  // Reset if stuck
-  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -492,7 +503,14 @@ void TclMinisplit::persistence_check_save_() {
 
   // Debounce elapsed — check if state actually differs from last save
   SavedState current;
-  current.from_ac_state(this->state_, this->gen_);
+  if (this->state_.power) {
+    // AC is ON — full state snapshot
+    current.from_ac_state(this->state_, this->gen_);
+  } else {
+    // AC is OFF — only update power bit, preserve last active settings
+    current = this->last_saved_state_;
+    current.power = 0;
+  }
 
   if (current.equals(this->last_saved_state_)) {
     // State matches what's already saved — skip write

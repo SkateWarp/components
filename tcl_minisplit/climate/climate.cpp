@@ -71,69 +71,69 @@ void TclMinisplitClimate::setup() {
 }
 
 void TclMinisplitClimate::control(const climate::ClimateCall &call) {
-  this->parent_->prepare_pending_state();
-  AcState *pending = this->parent_->get_pending_state();
-  if (!pending)
-    return;
+  AcState &state = this->parent_->get_state();
 
   // Mode
   if (call.get_mode().has_value()) {
     climate::ClimateMode mode = *call.get_mode();
     if (mode == climate::CLIMATE_MODE_OFF) {
-      pending->power = false;
-      pending->sleep_mode = 0;
-      pending->turbo = false;
-      pending->eco = false;
+      state.power = false;
+      state.sleep_mode = 0;
+      state.turbo = false;
+      state.eco = false;
     } else {
-      pending->power = true;
-      this->esphome_to_ac_mode_(mode, pending->mode, pending->power);
+      state.power = true;
+      this->esphome_to_ac_mode_(mode, state.mode, state.power);
     }
   }
 
   // Temperature
   if (call.get_target_temperature().has_value()) {
-    pending->target_temp = *call.get_target_temperature();
+    state.target_temp = *call.get_target_temperature();
   }
 
   // Fan mode
   if (call.get_fan_mode().has_value()) {
-    this->esphome_to_ac_fan_(*call.get_fan_mode(), pending->fan, pending->mute);
-    pending->turbo = false;  // Clear turbo when changing fan
+    this->esphome_to_ac_fan_(*call.get_fan_mode(), state.fan, state.mute);
+    state.turbo = false;  // Clear turbo when changing fan
   }
 
   // Swing
   if (call.get_swing_mode().has_value()) {
     auto swing = *call.get_swing_mode();
-    pending->swing_v = (swing == climate::CLIMATE_SWING_VERTICAL || swing == climate::CLIMATE_SWING_BOTH);
-    pending->swing_h = (swing == climate::CLIMATE_SWING_HORIZONTAL || swing == climate::CLIMATE_SWING_BOTH);
+    state.swing_v = (swing == climate::CLIMATE_SWING_VERTICAL || swing == climate::CLIMATE_SWING_BOTH);
+    state.swing_h = (swing == climate::CLIMATE_SWING_HORIZONTAL || swing == climate::CLIMATE_SWING_BOTH);
   }
 
-  // Preset (independent if, not else-if — fixes Anyelo's original bug)
+  // Preset
   if (call.get_preset().has_value()) {
     auto preset = *call.get_preset();
-    pending->eco = false;
-    pending->turbo = false;
-    pending->sleep_mode = 0;
-    pending->mute = false;
+    state.eco = false;
+    state.turbo = false;
+    state.sleep_mode = 0;
+    state.mute = false;
 
     switch (preset) {
       case climate::CLIMATE_PRESET_ECO:
-        pending->eco = true;
-        pending->fan = 0;
+        state.eco = true;
+        state.fan = 0;
         break;
       case climate::CLIMATE_PRESET_BOOST:
-        pending->turbo = true;
-        pending->fan = 3;
+        state.turbo = true;
+        state.fan = 3;
         break;
       case climate::CLIMATE_PRESET_SLEEP:
-        pending->sleep_mode = 1;  // default sleep mode
+        state.sleep_mode = 1;  // default sleep mode
         break;
       case climate::CLIMATE_PRESET_NONE:
       default:
-        pending->fan = 0;
+        state.fan = 0;
         break;
     }
   }
+
+  // Snapshot updated state as pending command
+  this->parent_->prepare_pending_state();
 }
 
 climate::ClimateTraits TclMinisplitClimate::traits() {

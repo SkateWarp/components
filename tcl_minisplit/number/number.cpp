@@ -39,28 +39,28 @@ void TclMinisplitNumber::control(float value) {
     return;
   }
 
-  this->parent_->prepare_pending_state();
-  AcState *pending = this->parent_->get_pending_state();
-  if (!pending)
-    return;
-
+  // Update live state immediately — these are TX-only fields that RX never
+  // overwrites, so state_ must track the user's choice for future commands.
+  AcState &live = this->parent_->get_state();
   switch (this->purpose_) {
     case NUMBER_SLEEP_MODE:
-      pending->sleep_mode = val & 0x03;
+      live.sleep_mode = val & 0x03;
       ESP_LOGD(TAG, "Sleep mode: %d", val);
       break;
     case NUMBER_VSWING_POS:
-      pending->vswing_pos_tx = val;
+      live.vswing_pos_tx = val;
       ESP_LOGD(TAG, "VSwing pos TX: 0x%02X", val);
       break;
     case NUMBER_HSWING_POS:
-      pending->hswing_pos_tx = val;
+      live.hswing_pos_tx = val;
       ESP_LOGD(TAG, "HSwing pos TX: 0x%02X", val);
       break;
     default:
       break;
   }
 
+  // Create pending command from (now updated) state
+  this->parent_->prepare_pending_state();
   this->publish_state(value);
 }
 

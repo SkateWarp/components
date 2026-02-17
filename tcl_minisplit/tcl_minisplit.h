@@ -139,6 +139,7 @@ class TclMinisplit : public Component, public uart::UARTDevice {
   void prepare_pending_state();
   bool has_pending_state() const { return pending_state_ != nullptr; }
   AcState *get_pending_state() { return pending_state_.get(); }
+  AcState &get_state() { return state_; }
 
   // Persistence control
   void set_persistence_enabled(bool enabled);
@@ -165,7 +166,6 @@ class TclMinisplit : public Component, public uart::UARTDevice {
   void process_serial_data_();
   void parse_rx_packet_(const uint8_t *data, size_t len);
   void send_pending_command_();
-  void send_heartbeat_if_needed_();
   void build_tx_packet_(const AcState &state, uint8_t *cmd, size_t len);
   void calculate_checksum_(uint8_t *data, size_t len);
   bool validate_checksum_(const uint8_t *data, size_t len);
@@ -234,7 +234,6 @@ class TclMinisplit : public Component, public uart::UARTDevice {
 
   // Timing
   unsigned long last_heartbeat_{0};
-  bool awaiting_response_{false};
   bool first_rx_received_{false};
   unsigned long dev_pause_until_{0};  // Pause heartbeats after raw TX
 

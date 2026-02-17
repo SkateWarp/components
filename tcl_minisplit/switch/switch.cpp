@@ -25,18 +25,19 @@ void TclMinisplitSwitch::setup() {
 }
 
 void TclMinisplitSwitch::write_state(bool state) {
-  this->parent_->prepare_pending_state();
-  AcState *pending = this->parent_->get_pending_state();
-  if (!pending)
-    return;
-
+  // Update live state immediately — critical for TX-only fields (beep, fahrenheit)
+  // that RX never overwrites, so state_ must track the user's choice.
+  // For RX-reflected fields (display, health), the next RX will correct if needed.
+  AcState &live = this->parent_->get_state();
   switch (this->purpose_) {
-    case SWITCH_DISPLAY:    pending->display = state;    break;
-    case SWITCH_BEEP:       pending->beep = state;       break;
-    case SWITCH_HEALTH:     pending->health = state;     break;
-    case SWITCH_FAHRENHEIT: pending->fahrenheit = state;  break;
+    case SWITCH_DISPLAY:    live.display = state;    break;
+    case SWITCH_BEEP:       live.beep = state;       break;
+    case SWITCH_HEALTH:     live.health = state;     break;
+    case SWITCH_FAHRENHEIT: live.fahrenheit = state;  break;
   }
 
+  // Create pending command from (now updated) state
+  this->parent_->prepare_pending_state();
   this->publish_state(state);
 }
 
